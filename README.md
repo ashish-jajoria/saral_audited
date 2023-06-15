@@ -28,7 +28,18 @@ Audited is currently ActiveRecord-only. In a previous life, Audited worked with 
 Add the gem to your Gemfile:
 
 ```ruby
-gem "audited", "~> 4.7"
+gem "audited"
+```
+
+And if you're using ```require: false``` you must add initializers like this:
+
+```ruby
+#./config/initializers/audited.rb
+require "audited"
+require 'location_audited'
+
+Audited::Railtie.initializers.each(&:run)
+LocationAudited::Railtie.initializers.each(&:run)
 ```
 
 Then, from your Rails app directory, create the `audits` table:
