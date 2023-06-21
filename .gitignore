@@ -16,3 +16,4 @@ gemfiles/*.lock
 pkg
 tmp/*
 audited_test.sqlite3.db
+.idea
