@@ -1,31 +1,16 @@
-# frozen_string_literal: true
-
-require "active_record"
-require "request_store"
+require 'active_record'
 
 module LocationAudited
   class << self
-    attr_accessor \
-      :auditing_enabled,
-      :current_user_method,
-      :ignored_attributes,
-      :max_audits,
-      :store_synthesized_enums
+    attr_accessor :ignored_attributes, :current_user_method, :max_audits, :auditing_enabled
     attr_writer :audit_class
 
     def audit_class
-      # The audit_class is set as String in the initializer. It can not be constantized during initialization and must
-      # be constantized at runtime. See https://github.com/collectiveidea/audited/issues/608
-      @audit_class = @audit_class.safe_constantize if @audit_class.is_a?(String)
-      @audit_class ||= LocationAudited::LocationAudit
+      @audit_class ||= LocationAudit
     end
 
-    # remove audit_model in next major version it was only shortly present in 5.1.0
-    alias_method :audit_model, :audit_class
-    deprecate audit_model: "use LocationAudited.audit_class instead of LocationAudited.audit_model. This method will be removed."
-
     def store
-      RequestStore.store[:audited_store] ||= {}
+      Thread.current[:audited_store] ||= {}
     end
 
     def config
@@ -33,19 +18,15 @@ module LocationAudited
     end
   end
 
-  @ignored_attributes = %w[lock_version created_at updated_at created_on updated_on]
+  @ignored_attributes = %w(lock_version created_at updated_at created_on updated_on)
 
   @current_user_method = :current_user
   @auditing_enabled = true
-  @store_synthesized_enums = false
 end
 
-require "location_audited/location_auditor"
+require 'location_audited/location_auditor'
+require 'location_audited/location_audit'
 
-ActiveSupport.on_load :active_record do
-  require "location_audited/location_audit"
-  include LocationAudited::LocationAuditor
-end
+::ActiveRecord::Base.send :include, LocationAudited::LocationAuditor
 
-require "location_audited/location_sweeper"
-require "location_audited/location_railtie"
+require 'location_audited/location_sweeper'

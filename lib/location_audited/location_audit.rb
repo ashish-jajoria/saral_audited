@@ -1,9 +1,7 @@
-# frozen_string_literal: true
-
-require "set"
+require 'set'
 
 module LocationAudited
-  # Audit saves the changes to ActiveRecord models.  It has the following attributes:
+  # LocationAudit saves the changes to ActiveRecord models.  It has the following attributes:
   #
   # * <tt>auditable</tt>: the ActiveRecord model that was changed
   # * <tt>user</tt>: the user that performed the change; a string or an ActiveRecord model
@@ -18,7 +16,7 @@ module LocationAudited
   class YAMLIfTextColumnType
     class << self
       def load(obj)
-        if text_column?
+        if LocationAudited.audit_class.columns_hash["audited_changes"].type.to_s == "text"
           ActiveRecord::Coders::YAMLColumn.new(Object).load(obj)
         else
           obj
@@ -26,22 +24,19 @@ module LocationAudited
       end
 
       def dump(obj)
-        if text_column?
+        if LocationAudited.audit_class.columns_hash["audited_changes"].type.to_s == "text"
           ActiveRecord::Coders::YAMLColumn.new(Object).dump(obj)
         else
           obj
         end
       end
-
-      def text_column?
-        LocationAudited.audit_class.columns_hash["audited_changes"].type.to_s == "text"
-      end
     end
   end
 
+  #noinspection SqlDialectInspection,SqlNoDataSourceInspection,RailsParamDefResolve
   class LocationAudit < ::ActiveRecord::Base
-    belongs_to :auditable, polymorphic: true
-    belongs_to :user, polymorphic: true
+    belongs_to :auditable,  polymorphic: true
+    belongs_to :user,       polymorphic: true
     belongs_to :associated, polymorphic: true
 
     before_create :set_version_number, :set_audit_user, :set_request_uuid, :set_remote_address
@@ -51,16 +46,16 @@ module LocationAudited
 
     serialize :audited_changes, YAMLIfTextColumnType
 
-    scope :ascending, -> { reorder(version: :asc) }
-    scope :descending, -> { reorder(version: :desc) }
-    scope :creates, -> { where(action: "create") }
-    scope :updates, -> { where(action: "update") }
-    scope :destroys, -> { where(action: "destroy") }
+    scope :ascending,     ->{ reorder(version: :asc) }
+    scope :descending,    ->{ reorder(version: :desc)}
+    scope :creates,       ->{ where(action: 'create')}
+    scope :updates,       ->{ where(action: 'update')}
+    scope :destroys,      ->{ where(action: 'destroy')}
 
-    scope :up_until, ->(date_or_time) { where("created_at <= ?", date_or_time) }
-    scope :from_version, ->(version) { where("version >= ?", version) }
-    scope :to_version, ->(version) { where("version <= ?", version) }
-    scope :auditable_finder, ->(auditable_id, auditable_type) { where(auditable_id: auditable_id, auditable_type: auditable_type) }
+    scope :up_until,      ->(date_or_time){ where("created_at <= ?", date_or_time) }
+    scope :from_version,  ->(version){ where('version >= ?', version) }
+    scope :to_version,    ->(version){ where('version <= ?', version) }
+    scope :auditable_finder, ->(auditable_id, auditable_type){ where(auditable_id: auditable_id, auditable_type: auditable_type)}
     # Return all audits older than the current one.
     def ancestors
       self.class.ascending.auditable_finder(auditable_id, auditable_type).to_version(version)
@@ -70,37 +65,40 @@ module LocationAudited
     # the object has been destroyed, this will be a new record.
     def revision
       clazz = auditable_type.constantize
-      (clazz.find_by_id(auditable_id) || clazz.new).tap do |m|
+      (clazz.find_by(id: auditable_id) || clazz.new).tap do |m|
         self.class.assign_revision_attributes(m, self.class.reconstruct_attributes(ancestors).merge(audit_version: version))
       end
     end
 
     # Returns a hash of the changed attributes with the new values
     def new_attributes
-      (audited_changes || {}).each_with_object({}.with_indifferent_access) do |(attr, values), attrs|
-        attrs[attr] = (action == "update") ? values.last : values
+      (audited_changes || {}).inject({}.with_indifferent_access) do |attrs, (attr, values)|
+        attrs[attr] = values.is_a?(Array) ? values.last : values
+        attrs
       end
     end
 
     # Returns a hash of the changed attributes with the old values
     def old_attributes
-      (audited_changes || {}).each_with_object({}.with_indifferent_access) do |(attr, values), attrs|
-        attrs[attr] = (action == "update") ? values.first : values
+      (audited_changes || {}).inject({}.with_indifferent_access) do |attrs, (attr, values)|
+        attrs[attr] = Array(values).first
+
+        attrs
       end
     end
 
     # Allows user to undo changes
     def undo
       case action
-      when "create"
+      when 'create'
         # destroys a newly created record
         auditable.destroy!
-      when "destroy"
+      when 'destroy'
         # creates a new record with the destroyed record attributes
         auditable_type.constantize.create!(audited_changes)
-      when "update"
+      when 'update'
         # changes back attributes
-        auditable.update!(audited_changes.transform_values(&:first))
+        auditable.update_attributes!(audited_changes.transform_values(&:first))
       else
         raise StandardError, "invalid action given #{action}"
       end
@@ -125,7 +123,7 @@ module LocationAudited
     alias_method :user_as_model, :user
     alias_method :user, :user_as_string
 
-    # Returns the list of classes that are being audited
+    # Returns the list of classes that are being location_audited
     def self.audited_classes
       audited_class_names.map(&:constantize)
     end
@@ -133,7 +131,7 @@ module LocationAudited
     # All audits made during the block called will be recorded as made
     # by +user+. This method is hopefully threadsafe, making it ideal
     # for background operations that require audit information.
-    def self.as_user(user)
+    def self.as_user(user, &block)
       last_audited_user = ::LocationAudited.store[:audited_user]
       ::LocationAudited.store[:audited_user] = user
       yield
@@ -143,10 +141,12 @@ module LocationAudited
 
     # @private
     def self.reconstruct_attributes(audits)
-      audits.each_with_object({}) do |audit, all|
-        all.merge!(audit.new_attributes)
-        all[:audit_version] = audit.version
+      attributes = {}
+      result = audits.collect do |audit|
+        attributes.merge!(audit.new_attributes)[:audit_version] = audit.version
+        yield attributes if block_given?
       end
+      block_given? ? result : attributes
     end
 
     # @private
@@ -164,20 +164,16 @@ module LocationAudited
     end
 
     # use created_at as timestamp cache key
-    def self.collection_cache_key(collection = all, *)
+    def self.collection_cache_key(collection = all, timestamp_column = :created_at)
       super(collection, :created_at)
     end
 
     private
 
+    #noinspection RailsParamDefResolve
     def set_version_number
-      if action == "create"
-        self.version = 1
-      else
-        collection = (ActiveRecord::VERSION::MAJOR >= 6) ? self.class.unscoped : self.class
-        max = collection.auditable_finder(auditable_id, auditable_type).maximum(:version) || 0
-        self.version = max + 1
-      end
+      max = self.class.auditable_finder(auditable_id, auditable_type).maximum(:version) || 0
+      self.version = max + 1
     end
 
     def set_audit_user

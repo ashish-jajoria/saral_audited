@@ -1,5 +1,3 @@
-# frozen_string_literal: true
-
 module LocationAudited
   class LocationSweeper
     STORED_DATA = {
@@ -38,5 +36,14 @@ module LocationAudited
     def controller=(value)
       store[:current_controller] = value
     end
+  end
+end
+
+ActiveSupport.on_load(:action_controller) do
+  if defined?(ActionController::Base)
+    ActionController::Base.around_action LocationAudited::LocationSweeper.new
+  end
+  if defined?(ActionController::API)
+    ActionController::API.around_action LocationAudited::LocationSweeper.new
   end
 end
